@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-build_base.py — Fusionne les sorties SIRENE + FINESS en UNE base sante,
-dedupliquee et typee. C'est le fichier final : base_sante.csv.
+build_base.py — Fusionne SIRENE + FINESS en UNE base sante, typee et dedupliquee.
+Sortie : base_sante.csv
 
-Dedup par SIREN (entite juridique) par defaut, ou par SIRET avec --by-site.
-Quand une entite est vue par les deux sources, on fusionne (source = "finess+sirene")
-et on complete les champs vides de l'une avec l'autre (ex: le telephone FINESS).
+Dedup sur SIREN (ou SIRET) quand disponible : une entite vue par les deux sources
+devient une ligne (source = "finess+sirene") et on complete les champs vides.
+Les etablissements FINESS SANS SIREN/SIRET sont CONSERVES (ils restent des prospects
+valides : nom + adresse + telephone), jamais fusionnes entre eux par erreur.
 
-    python build_base.py                                  # lit sirene_sante.csv + finess_sante.csv
+    python build_base.py
     python build_base.py --sirene sirene_sante.csv --finess finess_sante.csv --out base_sante.csv
-    python build_base.py --by-site
 """
 import argparse
 import csv
@@ -18,7 +18,7 @@ import os
 import sys
 from collections import Counter
 
-from common import BASE_COLS
+from common import BASE_COLS, clean_siret
 
 
 def load(path):
@@ -29,34 +29,46 @@ def load(path):
         return list(csv.DictReader(f))
 
 
-def merge(*sources, by_site=False):
-    base = {}
+def key_of(r):
+    siren = (r.get("siren") or "").strip()
+    if len(siren) == 9 and siren.isdigit():
+        return "s:" + siren
+    siret = clean_siret(r.get("siret"))
+    if siret:
+        return "e:" + siret
+    return None  # pas d'identifiant -> ligne conservee telle quelle
+
+
+def merge(*sources):
+    base, keyless, n = {}, [], 0
     for rows in sources:
         for r in rows:
-            key = r.get("siret") if (by_site and r.get("siret")) else r.get("siren")
-            if not key:
+            row = {c: r.get(c, "") for c in BASE_COLS}
+            k = key_of(r)
+            if k is None:
+                keyless.append(row)
+                n += 1
                 continue
-            if key not in base:
-                base[key] = {c: r.get(c, "") for c in BASE_COLS}
+            if k not in base:
+                base[k] = row
             else:
-                b = base[key]
-                srcs = set(filter(None, [b.get("source", "")] + r.get("source", "").split("+")))
+                b = base[k]
+                srcs = set(filter(None, [b.get("source", "")] + row.get("source", "").split("+")))
                 b["source"] = "+".join(sorted(srcs))
                 for c in BASE_COLS:
-                    if not b.get(c) and r.get(c):
-                        b[c] = r[c]
-    return list(base.values())
+                    if not b.get(c) and row.get(c):
+                        b[c] = row[c]
+    return list(base.values()) + keyless
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Fusionne SIRENE + FINESS -> base sante dedupliquee.")
+    ap = argparse.ArgumentParser(description="Fusionne SIRENE + FINESS -> base sante.")
     ap.add_argument("--sirene", default="sirene_sante.csv")
     ap.add_argument("--finess", default="finess_sante.csv")
     ap.add_argument("--out", default="base_sante.csv")
-    ap.add_argument("--by-site", action="store_true", help="Dedup par SIRET au lieu de SIREN.")
     a = ap.parse_args()
 
-    rows = merge(load(a.sirene), load(a.finess), by_site=a.by_site)
+    rows = merge(load(a.sirene), load(a.finess))
     with open(a.out, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=BASE_COLS)
         w.writeheader()
@@ -64,7 +76,8 @@ def main():
 
     by_type = Counter(r["type"] for r in rows)
     by_src = Counter(r["source"] for r in rows)
-    print(f"BASE: {len(rows)} entites -> {a.out}", file=sys.stderr)
+    with_id = sum(1 for r in rows if (r.get("siren") or r.get("siret")))
+    print(f"BASE: {len(rows)} entites -> {a.out} ({with_id} avec SIREN/SIRET)", file=sys.stderr)
     print("  par type   : " + ", ".join(f"{k}={v}" for k, v in sorted(by_type.items())), file=sys.stderr)
     print("  par source : " + ", ".join(f"{k}={v}" for k, v in sorted(by_src.items())), file=sys.stderr)
 
