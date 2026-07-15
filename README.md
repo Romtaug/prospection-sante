@@ -97,10 +97,15 @@ Restreindre à une zone partout : `--departements 69 38 01 42 73 74`, ou renseig
 C'est un **instantané**, pas du live : les registres bougent (créations, fermetures,
 déménagements). Relance le pipeline tous les 1 à 3 mois.
 
-`.github/workflows/refresh.yml` fournit un refresh **mensuel** (FINESS + fusion,
-rapide) qui publie `base_sante.csv` en artefact, plus un lancement manuel qui peut
-ajouter la collecte SIRENE API. L'enrichissement n'est **pas** lancé en CI (depuis
-une IP de datacenter, trop de sites bloquent le scraping) : lance `enrich.py` en local.
+`.github/workflows/refresh.yml` fournit un refresh **mensuel** (SIRENE API + FINESS +
+fusion) qui **commite `data/base_sante.csv` dans le repo** (fichier versionné, cliquable)
+et le publie aussi en artefact. Un lancement manuel permet de sauter SIRENE (base FINESS
+seule, rapide) ou de restreindre à quelques départements. L'enrichissement n'est **pas**
+lancé en CI (depuis une IP de datacenter, trop de sites bloquent le scraping) : lance
+`enrich.py` en local.
+
+Pour que le commit fonctionne, active une fois les droits d'écriture du workflow :
+Settings → Actions → General → Workflow permissions → "Read and write permissions".
 
 En local, tu peux aussi planifier avec cron, par ex. le 1er du mois à 3h :
 
