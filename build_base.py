@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-build_base.py — Fusionne SIRENE + FINESS en UNE base sante, typee et dedupliquee.
+build_base.py - Fusionne SIRENE + FINESS en UNE base sante, typee et dedupliquee.
 Sortie : base_sante.csv
 
-Dedup sur SIREN (ou SIRET) quand disponible : une entite vue par les deux sources
-devient une ligne (source = "finess+sirene") et on complete les champs vides.
+Dedup par ETABLISSEMENT (SIRET) par defaut : chaque site (clinique, EHPAD d'un
+groupe...) reste une ligne, c'est ce qu'il faut pour prospecter. Une entite vue par
+les deux sources sur le meme identifiant devient une ligne (source = "finess+sirene")
+et on complete les champs vides. Option --par-entreprise pour une ligne par SIREN.
 Les etablissements FINESS SANS SIREN/SIRET sont CONSERVES (ils restent des prospects
 valides : nom + adresse + telephone), jamais fusionnes entre eux par erreur.
 
@@ -29,22 +31,29 @@ def load(path):
         return list(csv.DictReader(f))
 
 
-def key_of(r):
-    siren = (r.get("siren") or "").strip()
-    if len(siren) == 9 and siren.isdigit():
-        return "s:" + siren
+def key_of(r, par_site=True):
     siret = clean_siret(r.get("siret"))
-    if siret:
-        return "e:" + siret
+    siren = (r.get("siren") or "").strip()
+    siren_ok = len(siren) == 9 and siren.isdigit()
+    if par_site:
+        if siret:
+            return "e:" + siret
+        if siren_ok:
+            return "s:" + siren
+    else:
+        if siren_ok:
+            return "s:" + siren
+        if siret:
+            return "e:" + siret
     return None  # pas d'identifiant -> ligne conservee telle quelle
 
 
-def merge(*sources):
+def merge(*sources, par_site=True):
     base, keyless, n = {}, [], 0
     for rows in sources:
         for r in rows:
             row = {c: r.get(c, "") for c in BASE_COLS}
-            k = key_of(r)
+            k = key_of(r, par_site)
             if k is None:
                 keyless.append(row)
                 n += 1
@@ -66,9 +75,11 @@ def main():
     ap.add_argument("--sirene", default="sirene_sante.csv")
     ap.add_argument("--finess", default="finess_sante.csv")
     ap.add_argument("--out", default="base_sante.csv")
+    ap.add_argument("--par-entreprise", action="store_true",
+                    help="Dedoublonne par SIREN (une ligne par entreprise) au lieu d'une par etablissement.")
     a = ap.parse_args()
 
-    rows = merge(load(a.sirene), load(a.finess))
+    rows = merge(load(a.sirene), load(a.finess), par_site=not a.par_entreprise)
     with open(a.out, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=BASE_COLS)
         w.writeheader()
