@@ -55,6 +55,7 @@ DEFAULT_TYPES = ["soins", "laboratoire", "medico-social"]
 RE_FINESS = re.compile(r"^(?:\d{9}|2[AB]\d{7})$")   # numero FINESS (9 car., Corse 2A/2B)
 RE_SIRET = re.compile(r"^\d{14}$")
 RE_INSEE = re.compile(r"^[0-9][0-9AB]\d{3}$")        # code commune INSEE (5 car.)
+RE_CPVILLE = re.compile(r"^\d{5}\s+\S.*$")           # "01440 VIRIAT" (code postal + ville)
 RE_LETTERS = re.compile(r"[A-Za-zÀ-ÿ]")
 TAGS = ("structureet", "geolocalisation")
 
@@ -85,7 +86,7 @@ def detect_delim(line):
 
 
 def extract(cells):
-    nofin = siret = phone = commune = nom = ""
+    nofin = siret = phone = commune = cpville = nom = ""
     for c in cells:
         q = c.strip().strip('"')
         if q.lower() in TAGS or not q:
@@ -96,13 +97,15 @@ def extract(cells):
             siret = q
         if not commune and RE_INSEE.match(q):
             commune = q
+        if not cpville and RE_CPVILLE.match(q):
+            cpville = q
         if not phone:
             n = norm_phone(q)
             if n:
                 phone = n
-        if not nom and len(RE_LETTERS.findall(q)) >= 4:
+        if not nom and not RE_CPVILLE.match(q) and len(RE_LETTERS.findall(q)) >= 4:
             nom = q
-    return nofin, siret, phone, commune, nom
+    return nofin, siret, phone, (cpville or commune), nom
 
 
 def read_text(src):
