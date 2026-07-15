@@ -1,0 +1,31 @@
+# =====================================================================
+#  Prospection sante B2B - configuration
+#  Cible : personnes morales du secteur sante / medico-social.
+# =====================================================================
+
+naf:
+  soins:         ["86.10Z", "86.90F", "86.22A", "86.90A"]   # hopitaux, cliniques, centres de sante, dialyse, imagerie, ambulances
+  laboratoire:   ["86.90B"]                                 # laboratoires d'analyses medicales
+  pharmacie:     ["47.73Z"]                                 # officines de pharmacie
+  distribution:  ["47.74Z", "46.46Z"]                       # materiel medical (detail) + grossistes pharma
+  industrie:     ["21.20Z", "21.10Z"]                       # industrie pharmaceutique
+  dispositif:    ["32.50A", "26.60Z", "32.50B"]             # dispositifs medicaux, electromedical, lunetterie
+  medico_social: ["87.10A", "87.10B", "87.10C", "87.30A", "87.30B"]  # EHPAD, hebergement handicap / pers. agees
+  fournisseur:   ["62.01Z", "58.29C", "63.11Z", "72.11Z"]   # editeurs / e-sante / hebergeurs HDS / R&D biotech
+
+# Personnes physiques (praticiens en solo) : JAMAIS collectees (donnees perso, RGPD, charte RPPS).
+exclure_liberaux: ["86.21Z", "86.22C", "86.23Z", "86.90D", "86.90E"]
+
+# Zone. Liste vide = France entiere. Exemple AURA autour de Lyon : ["69", "38", "01", "42", "73", "74"]
+departements: []
+
+# --- Enrichissement contacts (etape enrich.py) ---------------------------
+# Regle : on ne collecte QUE des emails generiques trouves sur le site officiel.
+# Aucun email nominatif (prenom.nom@) n'est devine : ce serait une donnee perso.
+enrichissement:
+  workers: 12
+  timeout_http: 6
+  tlds: ["fr", "com", "net", "io", "co", "org"]
+  role_prefixes: ["contact", "info", "hello", "bonjour", "accueil", "secretariat", "commercial", "direction", "rh"]
+  paths_a_scanner: ["/", "/contact", "/nous-contacter", "/contactez-nous", "/mentions-legales", "/a-propos", "/qui-sommes-nous", "/equipe"]
+  domaines_ignores: ["facebook.com", "linkedin.com", "google.com", "doctolib.fr", "pagesjaunes.fr", "societe.com", "pappers.fr", "infogreffe.fr", "youtube.com", "instagram.com", "twitter.com", "x.com", "wikipedia.org", "sentry.io", "wixpress.com"]
