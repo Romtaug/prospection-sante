@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-finess_ingest.py — Etablissements sante & medico-sociaux depuis FINESS
+finess_ingest.py - Etablissements sante & medico-sociaux depuis FINESS
 (open data, Licence Ouverte). Sortie alignee sur le schema commun.
 
 Robuste au format reel :
@@ -107,7 +107,7 @@ def extract(cells):
 
 def read_text(src):
     data = src if isinstance(src, bytes) else open(src, "rb").read()
-    for enc in ("utf-8", "latin-1"):
+    for enc in ("utf-8-sig", "latin-1"):
         try:
             return data.decode(enc)
         except UnicodeDecodeError:
@@ -131,10 +131,16 @@ def parse_records(text):
         return
     delim = detect_delim(lines[0])
     rows = list(csv.reader(lines, delimiter=delim))
-    first_cell = rows[0][0].strip().strip('"').lower() if rows[0] else ""
-    legacy = first_cell in TAGS
-    data_rows = (r for r in rows if r and r[0].strip().strip('"').lower() == "structureet") if legacy \
-        else iter(rows[1:])  # header CSV : on saute la ligne d'en-tete
+
+    def tag(r):
+        return r[0].strip().strip('"').lower() if r else ""
+
+    legacy = any(tag(r) in TAGS for r in rows[:5])
+    if legacy:
+        data_rows = (r for r in rows if tag(r) == "structureet"
+                     and (len(r) < 2 or r[1].strip().strip('"').lower() != "nofinesset"))
+    else:
+        data_rows = (r for r in rows[1:] if tag(r) != "geolocalisation")
 
     diagnosed = False
     for r in data_rows:
