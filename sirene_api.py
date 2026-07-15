@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-sirene_api.py — Collecte SIRENE des entreprises sante via l'API publique
+sirene_api.py - Collecte SIRENE des entreprises sante via l'API publique
 recherche-entreprises.api.gouv.fr (aucune cle, aucun telechargement de fichier).
 
-Itere chaque NAF x chaque departement et pagine, pour contourner le plafond de
-resultats par requete. Plus lent que le mode 'stock', mais 100 % en code.
+Concu pour tenir des heures sans casser :
+ - chaque requete est retentee 4 fois (timeouts, coupures reseau, 429) avec
+   attente progressive ; une page definitivement en echec est SAUTEE, jamais fatale ;
+ - une seule requete par departement (tous les NAF combines), avec decoupage
+   automatique par NAF si un departement depasse le plafond de l'API (10 000
+   resultats par recherche) ; c'est ~10x moins de requetes qu'un NAF a la fois.
 
-    python sirene_api.py                         # tous les NAF de config.yml, France entiere
+    python sirene_api.py
     python sirene_api.py --departements 69 38 01 42 73 74
     python sirene_api.py --out sirene_sante.csv --sleep 0.2
 """
@@ -17,7 +21,7 @@ import sys
 import time
 
 from common import (load_config, naf_type_map, all_departements,
-                    clean_siret, siren_of, BASE_COLS)
+                    clean_siret, siren_of, USER_AGENT, BASE_COLS)
 
 try:
     import requests
@@ -25,60 +29,82 @@ except ImportError:
     requests = None
 
 API = "https://recherche-entreprises.api.gouv.fr/search"
-USER_AGENT = "prospection-sante/1.0 (SIRENE api)"
 PER_PAGE = 25
-MAX_PAGES = 400  # plafond de l'API : page * per_page <= ~10000
+MAX_PAGES = 400      # plafond API : page * per_page <= 10 000
+TIMEOUT = 60
+RETRIES = 4
 
 
-def fetch(session, naf, dep, page, sleep):
-    params = {"activite_principale": naf, "departement": dep,
-              "page": page, "per_page": PER_PAGE}
-    for attempt in range(4):
-        r = session.get(API, params=params, headers={"User-Agent": USER_AGENT}, timeout=30)
-        if r.status_code == 429:
-            time.sleep(2 * (attempt + 1))
-            continue
-        r.raise_for_status()
-        return r.json()
+def fetch(session, params, sleep):
+    """GET avec retries sur TOUT (timeout, reseau, 429, 5xx). Renvoie {} si echec definitif."""
+    for attempt in range(RETRIES):
+        try:
+            r = session.get(API, params=params, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+            if r.status_code == 429:
+                time.sleep(3 * (attempt + 1))
+                continue
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            wait = 3 * (attempt + 1)
+            print(f"  ! {type(e).__name__} sur {params.get('departement')} p{params.get('page')} "
+                  f"(tentative {attempt + 1}/{RETRIES}), retry dans {wait}s", file=sys.stderr)
+            time.sleep(wait)
+    print(f"  !! page abandonnee: dep {params.get('departement')} p{params.get('page')}", file=sys.stderr)
     return {}
 
 
-def parse_result(res, naf, typ):
+def parse_result(res, tmap):
+    naf = res.get("activite_principale") or ""
+    typ = tmap.get(naf.replace(".", "").upper(), "autre")
     siege = res.get("siege") or {}
     siret = clean_siret(siege.get("siret"))
     siren = res.get("siren") or siren_of(siret)
-    if len(siren) != 9:
+    if not siren or len(siren) != 9:
         return None
     dep = siege.get("departement") or (siege.get("code_commune") or "")[:2]
     return {"siren": siren, "siret": siret,
             "nom": res.get("nom_raison_sociale") or res.get("nom_complet") or "",
-            "type": typ, "naf": res.get("activite_principale") or naf,
+            "type": typ, "naf": naf,
             "libelle": res.get("libelle_activite_principale") or "",
             "commune": siege.get("libelle_commune") or "",
             "departement": dep, "telephone": "", "source": "sirene"}
+
+
+def collect_query(sess, base_params, rows, tmap, sleep, force=False):
+    """Pagine une recherche. Renvoie None si trop de resultats (a decouper), sinon le nb de pages lues."""
+    page, pages = 1, 1
+    while page <= pages:
+        data = fetch(sess, {**base_params, "page": page, "per_page": PER_PAGE}, sleep)
+        if not data:
+            return page - 1          # echec definitif de cette page : on passe a la suite
+        total = int(data.get("total_pages", 1) or 1)
+        if total > MAX_PAGES and not force:
+            return None              # trop gros pour une requete combinee : decouper par NAF
+        pages = min(total, MAX_PAGES)
+        for res in data.get("results", []):
+            row = parse_result(res, tmap)
+            if row:
+                rows[row["siren"]] = row
+        page += 1
+        time.sleep(sleep)
+    return page - 1
 
 
 def collect(cfg, nafs, deps, sleep):
     if requests is None:
         sys.exit("Le module 'requests' est requis (pip install requests).")
     tmap = naf_type_map(cfg)
+    naf_combi = ",".join(nafs)
     rows, sess = {}, requests.Session()
-    for naf in nafs:
-        typ = tmap.get(naf.replace(".", "").upper(), "autre")
-        for dep in deps:
-            page, pages = 1, 1
-            while page <= pages:
-                data = fetch(sess, naf, dep, page, sleep)
-                if not data:
-                    break
-                pages = min(int(data.get("total_pages", 1) or 1), MAX_PAGES)
-                for res in data.get("results", []):
-                    row = parse_result(res, naf, typ)
-                    if row:
-                        rows[row["siren"]] = row
-                page += 1
-                time.sleep(sleep)
-            print(f"  {naf} dep {dep} -> cumul {len(rows)}", file=sys.stderr)
+    for dep in deps:
+        r = collect_query(sess, {"activite_principale": naf_combi, "departement": dep}, rows, tmap, sleep)
+        if r is None:
+            print(f"  dep {dep}: volumineux, decoupage par NAF", file=sys.stderr)
+            for naf in nafs:
+                collect_query(sess, {"activite_principale": naf, "departement": dep},
+                              rows, tmap, sleep, force=True)
+        print(f"  dep {dep} -> cumul {len(rows)}", file=sys.stderr)
     return list(rows.values())
 
 
@@ -98,7 +124,7 @@ def main():
         w = csv.DictWriter(f, fieldnames=BASE_COLS)
         w.writeheader()
         w.writerows(rows)
-    print(f"SIRENE (api): {len(rows)} entites -> {a.out}", file=sys.stderr)
+    print(f"SIRENE (api): {len(rows)} entreprises -> {a.out}", file=sys.stderr)
 
 
 if __name__ == "__main__":
