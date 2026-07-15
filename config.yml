@@ -10,7 +10,7 @@ naf:
   distribution:  ["47.74Z", "46.46Z"]                       # materiel medical (detail) + grossistes pharma
   industrie:     ["21.20Z", "21.10Z"]                       # industrie pharmaceutique
   dispositif:    ["32.50A", "26.60Z", "32.50B"]             # dispositifs medicaux, electromedical, lunetterie
-  medico_social: ["87.10A", "87.10B", "87.10C", "87.30A", "87.30B"]  # EHPAD, hebergement handicap / pers. agees
+  medico-social: ["87.10A", "87.10B", "87.10C", "87.30A", "87.30B"]  # EHPAD, hebergement handicap / pers. agees
 
 # NAF "fournisseurs / editeurs sante" (62.01Z, 58.29C, 63.11Z, 72.11Z) VOLONTAIREMENT retires :
 # ce sont des codes generiques (informatique, R&D) qui rameneraient surtout des entreprises
