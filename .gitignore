@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Sorties generees (ne pas versionner)
+sirene_sante.csv
+finess_sante.csv
+base_sante.csv
+base_sante_enrichi.csv
+
+# Gros fichiers stock INSEE (a telecharger localement, jamais dans git)
+StockEtablissement_utf8.csv
+StockUniteLegale_utf8.csv
+*.zip
