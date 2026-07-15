@@ -1,18 +1,19 @@
-name: Refresh base sante
+name: Build base sante
 
-# Rafraichit la base a partir des sources ouvertes.
-# - Planifie : le 1er de chaque mois (FINESS + fusion, rapide).
-# - Manuel  : peut aussi lancer la collecte SIRENE via l'API (plus long).
-# L'enrichissement (scraping des sites) n'est PAS lance ici : depuis une IP de
-# datacenter, trop de sites bloquent. Lance `enrich.py` en local.
+# Construit la base complete a partir des sources ouvertes et la publie en artefact.
+# - Planifie : le 1er de chaque mois (SIRENE API + FINESS + fusion).
+# - Manuel   : possibilite de sauter SIRENE (base FINESS seule, rapide) ou de
+#              restreindre a quelques departements.
+# L'enrichissement (emails, scraping des sites) n'est PAS lance ici : depuis une IP
+# de datacenter trop de sites bloquent. Lance `python enrich.py` en local.
 
 on:
   schedule:
-    - cron: "0 4 1 * *"        # 1er du mois, 04:00 UTC
+    - cron: "0 3 1 * *"        # 1er du mois, 03:00 UTC
   workflow_dispatch:
     inputs:
-      sirene_api:
-        description: "Lancer aussi la collecte SIRENE via API ? (long)"
+      skip_sirene:
+        description: "Sauter SIRENE (base FINESS seule, rapide) ?"
         type: boolean
         default: false
       departements:
@@ -22,6 +23,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,8 +31,9 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
 
-      - name: SIRENE (API, sur demande)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.sirene_api }}
+      # Collecte SIRENE (API). Peut durer ~30 a 60 min a l'echelle nationale.
+      - name: SIRENE (API)
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_sirene) }}
         run: python sirene_api.py ${{ inputs.departements && format('--departements {0}', inputs.departements) || '' }}
 
       - name: FINESS
