@@ -11,7 +11,11 @@ naf:
   industrie:     ["21.20Z", "21.10Z"]                       # industrie pharmaceutique
   dispositif:    ["32.50A", "26.60Z", "32.50B"]             # dispositifs medicaux, electromedical, lunetterie
   medico_social: ["87.10A", "87.10B", "87.10C", "87.30A", "87.30B"]  # EHPAD, hebergement handicap / pers. agees
-  fournisseur:   ["62.01Z", "58.29C", "63.11Z", "72.11Z"]   # editeurs / e-sante / hebergeurs HDS / R&D biotech
+
+# NAF "fournisseurs / editeurs sante" (62.01Z, 58.29C, 63.11Z, 72.11Z) VOLONTAIREMENT retires :
+# ce sont des codes generiques (informatique, R&D) qui rameneraient surtout des entreprises
+# NON sante et pollueraient la base. Les vendeurs de la e-sante se ciblent par mot-cle, pas par NAF.
+# Si tu veux quand meme les inclure, ajoute une cle "fournisseur:" ci-dessus, mais attends-toi a beaucoup de bruit.
 
 # Personnes physiques (praticiens en solo) : JAMAIS collectees (donnees perso, RGPD, charte RPPS).
 exclure_liberaux: ["86.21Z", "86.22C", "86.23Z", "86.90D", "86.90E"]
@@ -20,7 +24,7 @@ exclure_liberaux: ["86.21Z", "86.22C", "86.23Z", "86.90D", "86.90E"]
 departements: []
 
 # --- Enrichissement contacts (etape enrich.py) ---------------------------
-# Regle : on ne collecte QUE des emails generiques trouves sur le site officiel.
+# Regle : uniquement des emails generiques trouves sur le site officiel.
 # Aucun email nominatif (prenom.nom@) n'est devine : ce serait une donnee perso.
 enrichissement:
   workers: 12
