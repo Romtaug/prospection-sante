@@ -9,6 +9,9 @@ finess_sante.csv
 base_sante.csv
 base_sante_enrichi.csv
 
+# ... sauf la base publiee par le workflow, committee volontairement :
+!data/base_sante.csv
+
 # Gros fichiers stock INSEE (a telecharger localement, jamais dans git)
 StockEtablissement_utf8.csv
 StockUniteLegale_utf8.csv
