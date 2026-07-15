@@ -1,11 +1,15 @@
 name: Build base sante
 
-# Construit la base complete a partir des sources ouvertes et la publie en artefact.
+# Construit la base complete a partir des sources ouvertes, la COMMIT dans data/
+# et la publie aussi en artefact.
 # - Planifie : le 1er de chaque mois (SIRENE API + FINESS + fusion).
 # - Manuel   : possibilite de sauter SIRENE (base FINESS seule, rapide) ou de
 #              restreindre a quelques departements.
 # L'enrichissement (emails, scraping des sites) n'est PAS lance ici : depuis une IP
 # de datacenter trop de sites bloquent. Lance `python enrich.py` en local.
+#
+# /!\ Le commit necessite les droits d'ecriture du workflow :
+#     Settings > Actions > General > Workflow permissions > "Read and write permissions".
 
 on:
   schedule:
@@ -19,6 +23,9 @@ on:
       departements:
         description: "Departements ex '69 38 01' (vide = France entiere)"
         required: false
+
+permissions:
+  contents: write              # necessaire pour committer le CSV dans le repo
 
 jobs:
   build:
@@ -42,7 +49,21 @@ jobs:
       - name: Fusion
         run: python build_base.py
 
-      - name: Publier la base en artefact
+      - name: Commit du CSV dans data/
+        run: |
+          mkdir -p data
+          cp base_sante.csv data/base_sante.csv
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f data/base_sante.csv
+          if git diff --staged --quiet; then
+            echo "Base inchangee, rien a committer."
+          else
+            git commit -m "Refresh base sante ($(date -u +%Y-%m-%d))"
+            git push
+          fi
+
+      - name: Publier aussi en artefact
         uses: actions/upload-artifact@v4
         with:
           name: base_sante
