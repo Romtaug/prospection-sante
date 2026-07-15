@@ -4,9 +4,10 @@
 finess_ingest.py — Etablissements sante & medico-sociaux depuis FINESS
 (open data, Licence Ouverte). Sortie alignee sur le schema commun.
 
-Robuste : on GARDE les etablissements meme sans SIRET (un hopital avec nom +
-adresse + telephone reste un prospect), et l'extraction du SIRET / departement
-ne depend pas de la position exacte des colonnes (le format FINESS bouge).
+Robuste au format : le classement par TYPE scanne la LIGNE ENTIERE (mots-cles
+sante), donc il ne depend pas de la position des colonnes. Le SIRET, le telephone,
+la commune et le departement sont eux aussi extraits par motif, pas par index fixe.
+On GARDE les etablissements meme sans SIRET (nom + adresse + tel = prospect valable).
 
     python finess_ingest.py --download
     python finess_ingest.py --download --types soins medico-social --departements 69 38 01
@@ -30,36 +31,35 @@ except ImportError:
 FINESS_CSV_URL = "https://www.data.gouv.fr/api/1/datasets/r/98f3161f-79ff-4f16-8f6a-6d571a80fea2"
 # /!\ Flux arrete le 20/07/2026 -> bascule Finess+ (CSV a en-tete) :
 #   org https://www.data.gouv.fr/organizations/agence-du-numerique-en-sante
-#   specs https://github.com/ansforge/finess  (jeux "finess-structures")
-# Le parseur gere deja les CSV a en-tete : remplace juste FINESS_CSV_URL.
+#   specs https://github.com/ansforge/finess
 USER_AGENT = "prospection-sante/1.0 (FINESS ingest)"
 STRUCT_TAG = "structureet"
-
-# Index des colonnes de debut de ligne (stables) du format historique.
-I_FINESSET, I_RS, I_COMMUNE, I_CATEG = 1, 3, 12, 19
-
-SIRET_RE = re.compile(r"(?<!\d)\d{14}(?!\d)")
 
 TYPE_KEYWORDS = {
     "soins": [
         "centre hospitalier", "hopital", "hospitali", "clinique", "chirurgic",
         "etablissement de soins", "soins medic", "soins plurid", "pluridisciplinaire",
-        "medecine chirurgie", "soins de suite", "readaptation", "dialyse", "hemodialyse",
-        "centre de sante", "maison de sante", "imagerie", "radiotherapie", "cancer",
-        "psychiatri", "urgences", "hospitalisation a domicile", "perinatal", "dispensaire"],
-    "laboratoire": ["laboratoire", "biologie medicale"],
+        "medecine chirurgie", "activites hospitalieres", "soins de suite", "readaptation",
+        "dialyse", "hemodialyse", "centre de sante", "maison de sante", "imagerie",
+        "radiotherapie", "cancer", "psychiatri", "urgences", "hospitalisation a domicile",
+        "perinatal", "dispensaire", "sante mentale"],
+    "laboratoire": ["laboratoire", "biologie medicale", "analyses medicales"],
     "medico-social": [
         "personnes agees", "ehpad", "dependantes", "handicap", "polyhandicap", "autiste",
         "medico-social", "medico social", "foyer", "maison d'accueil", "accueil medicalise",
         "esat", "itep", "institut medico", "ssiad", "residence autonomie", "aide a domicile",
-        "adultes handicapes", "enfants handicapes", "mecs", "csapa", "caarud"],
+        "adultes handicapes", "enfants handicapes", "mecs", "csapa", "caarud", "mas ", "fam "],
     "pharmacie": ["pharmacie", "officine"],
 }
 DEFAULT_TYPES = ["soins", "laboratoire", "medico-social"]
 
+RE_SIRET = re.compile(r"\d{14}")
+RE_INSEE = re.compile(r"^[0-9][0-9AB]\d{3}$")   # code commune INSEE (5 car., Corse 2A/2B)
+RE_LETTERS = re.compile(r"[A-Za-zÀ-ÿ]")
 
-def classify(*texts):
-    blob = strip_acc(" ".join(t for t in texts if t))
+
+def classify(line):
+    blob = strip_acc(line)
     for typ, kws in TYPE_KEYWORDS.items():
         if any(kw in blob for kw in kws):
             return typ
@@ -81,8 +81,9 @@ def dep_from_finess(nofinesset, commune=""):
 
 def first_siret(parts):
     for p in parts:
-        if re.fullmatch(r"\d{14}", p.strip().strip('"')):
-            return p.strip().strip('"')
+        q = p.strip().strip('"')
+        if re.fullmatch(r"\d{14}", q):
+            return q
     return ""
 
 
@@ -91,6 +92,23 @@ def first_phone(parts):
         n = norm_phone(p.strip().strip('"'))
         if n:
             return n
+    return ""
+
+
+def first_insee(parts):
+    for p in parts:
+        q = p.strip().strip('"')
+        if RE_INSEE.match(q):
+            return q
+    return ""
+
+
+def first_text(parts):
+    """Premier champ 'textuel' apres le tag : c'est la raison sociale."""
+    for p in parts[1:]:
+        q = p.strip().strip('"')
+        if len(RE_LETTERS.findall(q)) >= 4:
+            return q
     return ""
 
 
@@ -123,13 +141,17 @@ def parse_records(text):
     head = first.split(";")
     legacy = bool(head) and head[0].strip().strip('"').lower() in (STRUCT_TAG, "geolocalisation")
     if legacy:
+        diagnosed = False
         for line in text.splitlines():
             parts = line.rstrip("\n").split(";")
             if not parts or parts[0].strip().strip('"').lower() != STRUCT_TAG:
                 continue
-            yield {"nofinesset": cell(parts, I_FINESSET), "nom": cell(parts, I_RS),
-                   "categ": cell(parts, I_CATEG), "siret": first_siret(parts),
-                   "telephone": first_phone(parts), "commune": cell(parts, I_COMMUNE)}
+            if not diagnosed:
+                print(f"FINESS diag: {len(parts)} champs | debut: {line[:170]}", file=sys.stderr)
+                diagnosed = True
+            yield {"nofinesset": cell(parts, 1), "nom": first_text(parts) or cell(parts, 3),
+                   "siret": first_siret(parts), "telephone": first_phone(parts),
+                   "commune": first_insee(parts), "libelle": cell(parts, 19), "blob": line}
         return
     # Mode a en-tete (Finess+ / t_finess).
     delim = ";" if first.count(";") >= first.count(",") else ","
@@ -147,12 +169,13 @@ def parse_records(text):
              siret=find("siret"), cat=find("libcategetab", "categorie", "categ"),
              com=find("commune", "depcom"), tel=find("telephone", "tel"))
     for row in reader:
+        vals = " ".join(str(v) for v in row.values())
         yield {"nofinesset": row.get(c["fet"], "") if c["fet"] else "",
                "nom": row.get(c["rs"], "") if c["rs"] else "",
-               "categ": row.get(c["cat"], "") if c["cat"] else "",
                "siret": clean_siret(row.get(c["siret"], "") if c["siret"] else ""),
                "telephone": norm_phone(row.get(c["tel"], "") if c["tel"] else ""),
-               "commune": row.get(c["com"], "") if c["com"] else ""}
+               "commune": row.get(c["com"], "") if c["com"] else "",
+               "libelle": row.get(c["cat"], "") if c["cat"] else "", "blob": vals}
 
 
 def build(records, wanted_types, departements):
@@ -162,7 +185,7 @@ def build(records, wanted_types, departements):
     for rec in records:
         stats["total"] += 1
         dep = dep_from_finess(rec["nofinesset"], rec["commune"])
-        typ = classify(rec["nom"], rec["categ"])
+        typ = classify(rec["blob"])
         if wanted_types and typ not in wanted_types:
             stats["hors_type"] += 1
             continue
@@ -178,7 +201,7 @@ def build(records, wanted_types, departements):
         if not siren:
             stats["sans_siret"] += 1
         rows.append({"siren": siren, "siret": siret, "nom": rec["nom"], "type": typ,
-                     "naf": "", "libelle": rec["categ"], "commune": rec["commune"],
+                     "naf": "", "libelle": rec["libelle"], "commune": rec["commune"],
                      "departement": dep, "telephone": rec["telephone"], "source": "finess"})
     return rows, stats
 
@@ -190,7 +213,7 @@ def main():
     src.add_argument("--file")
     ap.add_argument("--types", nargs="+", default=DEFAULT_TYPES,
                     choices=["soins", "laboratoire", "medico-social", "pharmacie", "autre"])
-    ap.add_argument("--all", action="store_true", help="Garde tous les types (etablissements sociaux, formation...).")
+    ap.add_argument("--all", action="store_true", help="Garde tous les types.")
     ap.add_argument("--departements", nargs="+")
     ap.add_argument("--out", default="finess_sante.csv")
     a = ap.parse_args()
