@@ -490,7 +490,7 @@ def completer_web(a, cfg, sc):
         rows = list(csv.DictReader(f))
     idxs = []
     for i, r in enumerate(rows):
-        if r.get("web_fait") == "oui":
+        if r.get("web_fait") == "oui" and not (a.retenter_vides and not (r.get("email") or "").strip()):
             continue
         if a.types and r.get("type") not in a.types:
             continue
@@ -547,6 +547,8 @@ def main():
     ap.add_argument("--sans-web", action="store_true", help="Sauter le scraping (fiche officielle seule, rapide).")
     ap.add_argument("--completer-web", action="store_true",
                     help="Completer le web (contacts) des lignes deja fichees avec --sans-web.")
+    ap.add_argument("--retenter-vides", action="store_true",
+                    help="Avec --completer-web : retente aussi les lignes deja faites mais sans email trouve (ex: passage local apres GitHub).")
     ap.add_argument("--workers", type=int)
     ap.add_argument("--stats", action="store_true", help="Afficher l'avancement et sortir.")
     a = ap.parse_args()
