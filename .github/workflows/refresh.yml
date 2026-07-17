@@ -60,6 +60,7 @@ jobs:
             echo "Base inchangee, rien a committer."
           else
             git commit -m "Refresh base sante ($(date -u +%Y-%m-%d))"
+            git pull --rebase origin main || true
             git push
           fi
 
