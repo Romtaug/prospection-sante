@@ -29,10 +29,13 @@ faites sont sautees. Relancez autant de fois que necessaire :
     python enrich.py --bodacc --limit 300
     python enrich.py --stats            # ou en suis-je ?
 
-A lancer en LOCAL (les IP de datacenter se font bloquer par les sites).
+Optimal en LOCAL (meilleur taux d'emails). Fonctionne aussi entierement via
+GitHub Actions (workflow enrich.yml) : phase fiche avec --sans-web, puis
+phase contacts avec --completer-web, sortie compressee (--out ....csv.gz).
 """
 import argparse
 import csv
+import gzip
 import os
 import re
 import sys
@@ -64,8 +67,15 @@ ENRICH_COLS = ["score", "tier", "raisons",
                "adresse", "cp", "ville", "latitude", "longitude", "tva_intra",
                "dirigeant", "qualite", "autres_dirigeants", "labels", "idcc",
                "domain", "email", "email_source", "email_status", "autres_emails",
-               "linkedin", "signaux_bodacc", "date_enrichi"]
+               "linkedin", "signaux_bodacc", "date_enrichi", "web_fait"]
 OUT_COLS = BASE_COLS + ENRICH_COLS
+
+
+def opencsv(path, mode):
+    """Ouvre un CSV, compresse (.gz) ou non, en texte utf-8."""
+    if path.endswith(".gz"):
+        return gzip.open(path, mode + "t", encoding="utf-8", newline="")
+    return open(path, mode, newline="", encoding="utf-8")
 
 EFFECTIFS = {"00": "0", "01": "1-2", "02": "3-5", "03": "6-9", "11": "10-19",
              "12": "20-49", "21": "50-99", "22": "100-199", "31": "200-249",
@@ -460,14 +470,66 @@ def enrich_row(base_row, cfg, sc, use_bodacc, use_web):
             row["telephone"] = contacts["telephone"]
     row["score"], row["tier"], row["raisons"] = compute_score(row, sc, distress)
     row["date_enrichi"] = date.today().isoformat()
+    row["web_fait"] = "oui" if use_web else "non"
     return row
 
 
 def load_done(path):
     if not os.path.exists(path):
         return set()
-    with open(path, encoding="utf-8") as f:
+    with opencsv(path, "r") as f:
         return {row_key(r) for r in csv.DictReader(f)}
+
+
+def completer_web(a, cfg, sc):
+    """Complete le web (contacts) des lignes deja fichees (web_fait=non), sur place."""
+    if not os.path.exists(a.out):
+        print("Rien a completer: la sortie n'existe pas encore.", file=sys.stderr)
+        return
+    with opencsv(a.out, "r") as f:
+        rows = list(csv.DictReader(f))
+    idxs = []
+    for i, r in enumerate(rows):
+        if r.get("web_fait") == "oui":
+            continue
+        if a.types and r.get("type") not in a.types:
+            continue
+        if a.departements and r.get("departement") not in a.departements:
+            continue
+        idxs.append(i)
+        if len(idxs) >= a.limit:
+            break
+    if not idxs:
+        print("Rien a completer (web deja fait pour ces filtres).", file=sys.stderr)
+        return
+    print(f"{len(idxs)} lignes a completer (web) sur {len(rows)}", file=sys.stderr)
+
+    def work(i):
+        r = rows[i]
+        c = scrape_contacts(r.get("nom", ""), r.get("ville") or r.get("commune", ""), cfg)
+        for k in ("domain", "email", "email_source", "email_status", "autres_emails", "linkedin"):
+            r[k] = c[k]
+        if c["telephone"] and not r.get("telephone"):
+            r["telephone"] = c["telephone"]
+        r["score"], r["tier"], r["raisons"] = compute_score(r, sc, r.get("tier") == "exclu")
+        r["date_enrichi"] = date.today().isoformat()
+        r["web_fait"] = "oui"
+
+    done_n = 0
+    with ThreadPoolExecutor(max_workers=cfg["workers"]) as ex:
+        for _ in as_completed([ex.submit(work, i) for i in idxs]):
+            done_n += 1
+            if done_n % 20 == 0:
+                print(f"  {done_n}/{len(idxs)}", file=sys.stderr)
+    tmp = (a.out[:-3] + ".tmp.gz") if a.out.endswith(".gz") else a.out + ".tmp"
+    with opencsv(tmp, "w") as f:
+        w = csv.DictWriter(f, fieldnames=OUT_COLS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    os.replace(tmp, a.out)
+    n_mail = sum(1 for r in rows if r.get("email"))
+    print(f"COMPLETER-WEB: +{done_n} lignes completees -> {a.out} (emails totaux: {n_mail}). "
+          f"Relancez pour continuer.", file=sys.stderr)
 
 
 def main():
@@ -483,6 +545,8 @@ def main():
                     help="Traiter d'abord les lignes qui ont deja un telephone (FINESS).")
     ap.add_argument("--bodacc", action="store_true", help="Ajouter les signaux BODACC (plus lent).")
     ap.add_argument("--sans-web", action="store_true", help="Sauter le scraping (fiche officielle seule, rapide).")
+    ap.add_argument("--completer-web", action="store_true",
+                    help="Completer le web (contacts) des lignes deja fichees avec --sans-web.")
     ap.add_argument("--workers", type=int)
     ap.add_argument("--stats", action="store_true", help="Afficher l'avancement et sortir.")
     a = ap.parse_args()
@@ -494,12 +558,19 @@ def main():
     cfg, sc = conf["enrichissement"], conf["scoring"]
     if a.workers:
         cfg["workers"] = a.workers
+    if a.completer_web:
+        completer_web(a, cfg, sc)
+        return
 
     with open(inp, encoding="utf-8") as f:
         base = list(csv.DictReader(f))
     done = load_done(a.out)
     if a.stats:
-        print(f"{len(done)} / {len(base)} lignes enrichies dans {a.out}", file=sys.stderr)
+        web = 0
+        if os.path.exists(a.out):
+            with opencsv(a.out, "r") as f:
+                web = sum(1 for r in csv.DictReader(f) if r.get("web_fait") == "oui")
+        print(f"{len(done)} / {len(base)} lignes enrichies dans {a.out} (dont web fait: {web})", file=sys.stderr)
         return
     pending, seen = [], set(done)
     for r in base:
@@ -522,7 +593,7 @@ def main():
           f"(web={'non' if a.sans_web else 'oui'}, bodacc={'oui' if a.bodacc else 'non'})", file=sys.stderr)
 
     new_file = not os.path.exists(a.out)
-    with open(a.out, "a", newline="", encoding="utf-8") as f:
+    with opencsv(a.out, "a") as f:
         w = csv.DictWriter(f, fieldnames=OUT_COLS, extrasaction="ignore")
         if new_file:
             w.writeheader()
@@ -537,8 +608,9 @@ def main():
                 done_n += 1
                 if done_n % 20 == 0:
                     print(f"  {done_n}/{len(pending)}", file=sys.stderr)
-    n_mail = sum(1 for _ in open(a.out, encoding="utf-8")) - 1
-    print(f"ENRICH: +{done_n} lignes ce run -> {a.out} ({n_mail} au total). "
+    with opencsv(a.out, "r") as f:
+        n_tot = sum(1 for _ in f) - 1
+    print(f"ENRICH: +{done_n} lignes ce run -> {a.out} ({n_tot} au total). "
           f"Relancez la meme commande pour continuer.", file=sys.stderr)
 
 
