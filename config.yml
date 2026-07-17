@@ -13,23 +13,43 @@ naf:
   medico-social: ["87.10A", "87.10B", "87.10C", "87.30A", "87.30B"]  # EHPAD, hebergement handicap / pers. agees
 
 # NAF "fournisseurs / editeurs sante" (62.01Z, 58.29C, 63.11Z, 72.11Z) VOLONTAIREMENT retires :
-# ce sont des codes generiques (informatique, R&D) qui rameneraient surtout des entreprises
-# NON sante et pollueraient la base. Les vendeurs de la e-sante se ciblent par mot-cle, pas par NAF.
-# Si tu veux quand meme les inclure, ajoute une cle "fournisseur:" ci-dessus, mais attends-toi a beaucoup de bruit.
+# codes generiques qui rameneraient surtout des entreprises NON sante. Ajoute une cle
+# "fournisseur:" si tu les veux quand meme, mais attends-toi a beaucoup de bruit.
 
 # Personnes physiques (praticiens en solo) : JAMAIS collectees (donnees perso, RGPD, charte RPPS).
 exclure_liberaux: ["86.21Z", "86.22C", "86.23Z", "86.90D", "86.90E"]
 
-# Zone. Liste vide = France entiere. Exemple AURA autour de Lyon : ["69", "38", "01", "42", "73", "74"]
+# Zone. Liste vide = France entiere. Exemple AURA : ["69", "38", "01", "42", "73", "74"]
 departements: []
 
-# --- Enrichissement contacts (etape enrich.py) ---------------------------
-# Regle : uniquement des emails generiques trouves sur le site officiel.
-# Aucun email nominatif (prenom.nom@) n'est devine : ce serait une donnee perso.
+# --- Enrichissement (enrich.py) -------------------------------------------
+# Regle : uniquement des emails GENERIQUES trouves sur le site officiel.
+# Aucun email nominatif (prenom.nom@) n'est devine : donnee personnelle.
 enrichissement:
-  workers: 12
-  timeout_http: 6
-  tlds: ["fr", "com", "net", "io", "co", "org"]
-  role_prefixes: ["contact", "info", "hello", "bonjour", "accueil", "secretariat", "commercial", "direction", "rh"]
-  paths_a_scanner: ["/", "/contact", "/nous-contacter", "/contactez-nous", "/mentions-legales", "/a-propos", "/qui-sommes-nous", "/equipe"]
-  domaines_ignores: ["facebook.com", "linkedin.com", "google.com", "doctolib.fr", "pagesjaunes.fr", "societe.com", "pappers.fr", "infogreffe.fr", "youtube.com", "instagram.com", "twitter.com", "x.com", "wikipedia.org", "sentry.io", "wixpress.com"]
+  workers: 8
+  timeout_http: 8
+  duckduckgo_fallback: true      # si le domaine devine ne repond pas, chercher le site via DuckDuckGo
+  tlds: ["fr", "com", "org", "net", "eu"]
+  role_prefixes: ["contact", "info", "accueil", "secretariat", "administration", "direction", "commercial", "hello", "bonjour", "rh", "compta"]
+  paths_a_scanner: ["/", "/contact", "/nous-contacter", "/contactez-nous", "/mentions-legales", "/a-propos", "/qui-sommes-nous", "/informations-pratiques"]
+  domaines_ignores: ["facebook.com", "linkedin.com", "google.", "doctolib", "pagesjaunes", "societe.com", "pappers", "infogreffe", "youtube", "instagram", "twitter", "x.com", "wikipedia", "sentry", "wixpress", "sante.fr", "ameli.fr", "annuaire.sante", "hopital.fr", "aladom", "annuaire-", "lannuaire", "capgeris", "conseil-national", "ordre.", "tripadvisor", "trustpilot", "indeed", "glassdoor", "leboncoin"]
+
+# --- Scoring (0-100, tiers A/B/C) ------------------------------------------
+scoring:
+  poids_email: 20          # email generique trouve sur le site
+  poids_site: 8            # site trouve mais pas d'email
+  poids_telephone: 10
+  poids_finances: 15       # CA dans la fourchette ideale
+  poids_croissance: 5      # CA en hausse vs N-1
+  poids_effectif: 10       # effectif renseigne et >= 3 salaries
+  poids_categorie: 5       # PME / ETI / GE
+  poids_anciennete: 5
+  poids_dirigeant: 5
+  poids_labels: 5
+  ca_min_ideal: 200000
+  ca_max_ideal: 100000000
+  age_min: 3
+  age_max: 90
+  seuil_tier_A: 60
+  seuil_tier_B: 40
+  penalite_distress: 100   # procedure collective / radiation => tier "exclu"
