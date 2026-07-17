@@ -6,7 +6,7 @@ puis l'enrichit au maximum : fiche officielle, finances, dirigeants, labels,
 TVA, signaux BODACC, site web, email generique, telephone, LinkedIn, score.
 
 Sorties : `data/base_sante.csv` (via GitHub Actions) puis
-`base_sante_enrichi.csv` (41 colonnes, en local).
+`base_sante_enrichi.csv` (42 colonnes, en local ou entierement via GitHub Actions).
 
 ## Regle de perimetre
 
@@ -43,7 +43,7 @@ automatiquement.
 
 ## Etape 2 - l'enrichissement maximal (`enrich.py`, en LOCAL)
 
-Pour chaque ligne, ajoute 31 colonnes :
+Pour chaque ligne, ajoute 32 colonnes :
 
 - Fiche officielle (API Recherche d'entreprises, 1 appel par SIREN, cache) :
   effectif, categorie PME/ETI/GE, nature juridique, date de creation, nb
@@ -79,6 +79,22 @@ Strategie conseillee sur ~276 000 lignes : enrichir par segment prioritaire
 (ex. laboratoires + cliniques de ta region), et etendre ensuite. Compter
 environ 1 a 3 s par ligne avec le web (30 min pour 500 lignes a 8 workers),
 beaucoup moins avec `--sans-web`.
+
+### Tout via GitHub Actions (`.github/workflows/enrich.yml`)
+
+Le workflow "Enrichissement base sante" fait tout sur GitHub, chaque nuit :
+phase 1 (fiche officielle des nouvelles lignes) puis phase 2 (contacts web des
+lignes fichees). L'avancement est sauvegarde sur la branche `enrichi` du repo
+(`data/base_sante_enrichi.csv.gz`, compresse pour la limite GitHub de 100 Mo),
+et le CSV lisible est publie en artefact a chaque run. Lancement manuel
+possible (Run workflow) avec mode, volumes et filtres.
+
+A savoir : depuis les IP GitHub le taux d'emails trouves est plus faible qu'en
+local ; et sur un repo prive gratuit, le quota Actions est de 2000 min/mois.
+La phase fiche complete coute ~600 min ; le web complet 1500 a 5000 min selon
+les sites. Options si besoin : filtrer le web sur les segments prioritaires,
+etaler sur 2 mois, ou completer en local (`python enrich.py --completer-web`)
+sur le meme fichier.
 
 ## Prospection : les regles B2B (rappel)
 
