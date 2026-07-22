@@ -67,6 +67,8 @@ jobs:
 
       - name: Phase 1 - fiche officielle
         if: ${{ inputs.mode != 'web' }}
+        timeout-minutes: 200
+        continue-on-error: true
         run: >
           python enrich.py --sans-web
           --limit ${{ inputs.limit || '50000' }}
@@ -77,6 +79,8 @@ jobs:
 
       - name: Phase 2 - contacts web
         if: ${{ inputs.mode != 'fiche' }}
+        timeout-minutes: 110
+        continue-on-error: true
         run: >
           python enrich.py --completer-web --workers 16
           --limit ${{ inputs.web_limit || '10000' }}
@@ -85,12 +89,15 @@ jobs:
           ${{ inputs.departements && format('--departements {0}', inputs.departements) || '' }}
 
       - name: Avancement
+        if: ${{ always() }}
         run: |
           python enrich.py --stats --out data/base_sante_enrichi.csv.gz 2> data/enrichi_avancement.txt || true
           cat data/enrichi_avancement.txt
 
       - name: Sauvegarder sur la branche enrichi
+        if: ${{ always() }}
         run: |
+          [ -f data/base_sante_enrichi.csv.gz ] || { echo "rien a sauvegarder"; exit 0; }
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -B enrichi
@@ -99,6 +106,7 @@ jobs:
           git push -f origin enrichi
 
       - name: Preparer le CSV lisible (artefact)
+        if: ${{ always() }}
         run: |
           python - << 'EOF'
           import gzip, shutil, os
@@ -108,6 +116,7 @@ jobs:
           EOF
 
       - name: Publier le CSV enrichi en artefact
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: base_sante_enrichi
