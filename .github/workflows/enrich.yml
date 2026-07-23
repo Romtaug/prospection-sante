@@ -1,17 +1,22 @@
 name: Enrichissement base sante
 
-# Enrichit la base ENTIEREMENT via GitHub, avec reprise automatique :
+# Enrichit la base ENTIEREMENT via GitHub, avec reprise automatique.
 #  - phase 1 : fiche officielle (API) des lignes pas encore traitees
 #  - phase 2 : contacts web (site, email generique, LinkedIn) des lignes fichees
-# L'avancement est sauvegarde a chaque run sur la branche "enrichi" du repo
-# (fichier data/base_sante_enrichi.csv.gz, compresse pour tenir sous la limite
-# GitHub de 100 Mo). Le CSV lisible est aussi publie en artefact a chaque run.
+#
+# Robustesse : enrich.py ecrit un CSV NORMAL (data/base_sante_enrichi.csv). Une
+# coupure par le minuteur perd au pire la derniere ligne, le fichier reste
+# lisible. La compression .gz ne se fait qu'a l'etape de sauvegarde, en une
+# operation complete, jamais en streaming (c'est ce qui corrompait le fichier).
+# L'avancement est stocke sur la branche "enrichi" (data/base_sante_enrichi.csv.gz,
+# compresse pour la limite GitHub de 100 Mo). Le CSV lisible est publie en artefact.
 #
 # - Planifie : chaque nuit a 01:00 UTC (s'arrete tout seul quand tout est fait).
 # - Manuel   : Run workflow, avec mode / volumes / filtres.
 #
-# NOTE : depuis les IP GitHub, le taux d'emails trouves est plus faible qu'en
-# local (certains sites bloquent les datacenters). Rien ne casse pour autant.
+# NOTE : depuis les IP GitHub, l'API et les sites repondent lentement (datacenter
+# bride). La grosse passe fiche est bien plus rapide en local. Rien ne casse ici,
+# c'est juste lent ; la reprise garantit que rien n'est perdu.
 
 on:
   schedule:
@@ -58,12 +63,16 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
 
-      - name: Recuperer l'avancement precedent (branche enrichi)
+      - name: Recuperer l'avancement (branche enrichi) et decompresser
         run: |
           mkdir -p data
-          git fetch origin enrichi 2>/dev/null && \
-            git checkout origin/enrichi -- data/base_sante_enrichi.csv.gz 2>/dev/null && \
-            echo "avancement recupere" || echo "premier run (aucun avancement)"
+          if git fetch origin enrichi 2>/dev/null && git show FETCH_HEAD:data/base_sante_enrichi.csv.gz > prev.gz 2>/dev/null; then
+            gzip -dc prev.gz > data/base_sante_enrichi.csv || echo "gz tronque : recuperation partielle des lignes lisibles"
+            rm -f prev.gz
+            echo "avancement recupere : $(( $(wc -l < data/base_sante_enrichi.csv) - 1 )) lignes"
+          else
+            echo "premier run (aucun avancement a reprendre)"
+          fi
 
       - name: Phase 1 - fiche officielle
         if: ${{ inputs.mode != 'web' }}
@@ -72,7 +81,7 @@ jobs:
         run: >
           python enrich.py --sans-web
           --limit ${{ inputs.limit || '50000' }}
-          --out data/base_sante_enrichi.csv.gz
+          --out data/base_sante_enrichi.csv
           ${{ inputs.types && format('--types {0}', inputs.types) || '' }}
           ${{ inputs.departements && format('--departements {0}', inputs.departements) || '' }}
           ${{ inputs.bodacc && '--bodacc' || '' }}
@@ -84,20 +93,21 @@ jobs:
         run: >
           python enrich.py --completer-web --workers 16
           --limit ${{ inputs.web_limit || '10000' }}
-          --out data/base_sante_enrichi.csv.gz
+          --out data/base_sante_enrichi.csv
           ${{ inputs.types && format('--types {0}', inputs.types) || '' }}
           ${{ inputs.departements && format('--departements {0}', inputs.departements) || '' }}
 
       - name: Avancement
         if: ${{ always() }}
         run: |
-          python enrich.py --stats --out data/base_sante_enrichi.csv.gz 2> data/enrichi_avancement.txt || true
-          cat data/enrichi_avancement.txt
+          python enrich.py --stats --out data/base_sante_enrichi.csv 2> data/enrichi_avancement.txt || true
+          cat data/enrichi_avancement.txt || true
 
       - name: Sauvegarder sur la branche enrichi
         if: ${{ always() }}
         run: |
-          [ -f data/base_sante_enrichi.csv.gz ] || { echo "rien a sauvegarder"; exit 0; }
+          [ -f data/base_sante_enrichi.csv ] || { echo "rien a sauvegarder"; exit 0; }
+          gzip -c data/base_sante_enrichi.csv > data/base_sante_enrichi.csv.gz
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -B enrichi
@@ -105,20 +115,10 @@ jobs:
           git commit -m "Enrichissement $(date -u +%F)" || echo "rien a committer"
           git push -f origin enrichi
 
-      - name: Preparer le CSV lisible (artefact)
-        if: ${{ always() }}
-        run: |
-          python - << 'EOF'
-          import gzip, shutil, os
-          if os.path.exists("data/base_sante_enrichi.csv.gz"):
-              with gzip.open("data/base_sante_enrichi.csv.gz", "rb") as s, open("base_sante_enrichi.csv", "wb") as d:
-                  shutil.copyfileobj(s, d)
-          EOF
-
       - name: Publier le CSV enrichi en artefact
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: base_sante_enrichi
-          path: base_sante_enrichi.csv
+          path: data/base_sante_enrichi.csv
           if-no-files-found: warn
