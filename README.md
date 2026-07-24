@@ -38,8 +38,8 @@ automatiquement.
   priorite le NOUVEAU flux Finess+ "FINESS - Structures" (JSON quotidien,
   depuis le 20/07/2026), avec repli automatique sur l'ancien flux CSV (fige
   au 04/05/2026). Robuste au format (extraction par motifs et cles, jamais
-  par position) ; garde les etablissements sans SIRET et herite le SIREN de
-  l'entite juridique quand l'etablissement n'a pas le sien.
+  par position) ; ignore les etablissements FERMES, garde ceux sans SIRET et herite le
+  SIREN de l'entite juridique quand l'etablissement n'a pas le sien.
 - `build_base.py` : fusion + dedoublonnage par ETABLISSEMENT (chaque site
   d'un groupe reste une ligne ; `--par-entreprise` pour une ligne par SIREN).
 
