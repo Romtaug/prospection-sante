@@ -55,7 +55,7 @@ TYPE_KEYWORDS = {
         "perinatal", "dispensaire", "sante mentale", "medecins"],
     "laboratoire": ["laboratoire", "biologie medicale", "analyses medicales"],
     "medico-social": [
-        "personnes agees", "ehpad", "dependantes", "handicap", "polyhandicap", "autiste",
+        "personnes agees", "ehpad", "maison de retraite", "dependantes", "handicap", "polyhandicap", "autiste",
         "medico-social", "medico social", "foyer", "maison d'accueil", "accueil medicalise",
         "esat", "itep", "institut medico", "ssiad", "residence autonomie", "aide a domicile",
         "adultes handicapes", "enfants handicapes", "mecs", "csapa", "caarud",
@@ -66,8 +66,22 @@ DEFAULT_TYPES = ["soins", "laboratoire", "medico-social"]
 
 # Codes categorie FINESS surs (complement du classement par mots-cles,
 # utile quand le nom ne dit rien, ex. "RESIDENCE LES TILLEULS" code 500).
-CODE_CATEG = {"101": "soins", "355": "soins", "500": "medico-social",
-              "202": "medico-social", "611": "laboratoire"}
+CODE_CATEG = {"101": "soins", "355": "soins", "292": "soins", "365": "soins",
+              "500": "medico-social", "202": "medico-social",
+              "610": "laboratoire", "611": "laboratoire", "620": "pharmacie"}
+
+# Repli par NAF de l'entite juridique (codeApe, present dans le flux Finess+).
+NAF_TYPE = [("8690B", "laboratoire"), ("4773", "pharmacie"), ("8610", "soins"),
+            ("8690", "soins"), ("8622", "soins"), ("871", "medico-social"),
+            ("872", "medico-social"), ("873", "medico-social"),
+            ("8790", "medico-social"), ("8810", "medico-social")]
+
+
+def naf_hint(naf):
+    for pref, typ in NAF_TYPE:
+        if naf.startswith(pref):
+            return typ
+    return None
 
 RE_FINESS = re.compile(r"^(?:\d{9}|2[AB]\d{7})$")
 RE_SIRET = re.compile(r"^\d{14}$")
@@ -167,18 +181,27 @@ def _find(node, frags, pattern=None):
 def parse_json_records(obj):
     pmejs = obj.get("pmej") or []
     diagnosed = False
+    fermes = 0
     for pm in pmejs:
         info_pm = pm.get("informationsGeneralesPMEJ") or {}
         ej_nom = (info_pm.get("denominationLonguePmSmsse") or info_pm.get("denominationPm") or "").strip()
         ej_siren = str(info_pm.get("siren") or "").strip()
         if not (len(ej_siren) == 9 and ej_siren.isdigit()):
             ej_siren = ""
+        ej_naf = str(info_pm.get("codeApe") or "").replace(".", "").upper()
+        pm_ferme = bool(str(info_pm.get("dateFermeture") or "").strip())
         for ege in (pm.get("ege") or []):
             info = ege.get("informationsGeneralesEGE") or {}
+            if pm_ferme or str(info.get("dateFermeture") or "").strip():
+                fermes += 1          # etablissement ferme : hors prospection
+                continue
+            categ = ege.get("categorieentiteGeographiqueExercice")
+            if isinstance(categ, dict):
+                categ = categ.get("code") or ""
+            categ = str(categ or "").strip()
             if not diagnosed:
-                print(f"FINESS diag: mode=json (Finess+) pmej={len(pmejs)} | cles 1er EGE: "
-                      f"{sorted(info.keys())[:8]} | categ: {str(ege.get('categorieentiteGeographiqueExercice'))[:60]}",
-                      file=sys.stderr)
+                print(f"FINESS diag: mode=json (Finess+) pmej={len(pmejs)} | cles 1er EGE ouvert: "
+                      f"{sorted(info.keys())[:8]} | categ: {categ[:60]}", file=sys.stderr)
                 diagnosed = True
             nofin = _find(info, ("finess",), RE_FINESS) or _find(ege, ("finess",), RE_FINESS)
             siret = _find(ege, ("siret",), RE_SIRET)
@@ -193,13 +216,18 @@ def parse_json_records(obj):
             commune = next((t for t in texts if RE_CPVILLE.match(t)), "")
             if not commune:
                 cp = _find(ege, ("codepostal",), RE_CP)
-                ville = _find(ege, ("libellecommune", "nomcommune", "ville"), RE_HASLETTER)
-                commune = f"{cp} {ville}".strip() or _find(ege, ("commune",), RE_INSEE)
-            categ = str(ege.get("categorieentiteGeographiqueExercice") or "").strip()
+                ville = _find(ege, ("ligneacheminement", "libellecommune", "nomcommune", "ville"), RE_HASLETTER)
+                if ville.startswith(cp) and cp:
+                    commune = ville
+                else:
+                    commune = f"{cp} {ville}".strip() or _find(ege, ("commune",), RE_INSEE)
+            typ_hint = CODE_CATEG.get(categ) or naf_hint(ej_naf)
             yield {"nofinesset": nofin, "siret": siret, "telephone": phone,
                    "commune": commune, "nom": nom, "libelle": categ,
-                   "siren_ej": ej_siren, "type_hint": CODE_CATEG.get(categ),
-                   "blob": " ".join(texts) + " " + ej_nom + " " + categ}
+                   "siren_ej": ej_siren, "type_hint": typ_hint,
+                   "blob": " ".join(texts) + " " + ej_nom + " " + ej_naf + " " + categ}
+    if fermes:
+        print(f"FINESS: {fermes} etablissements fermes ignores (hors prospection)", file=sys.stderr)
 
 
 # ----------------------------------------------------------------------------
