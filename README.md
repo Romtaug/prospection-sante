@@ -34,10 +34,12 @@ automatiquement.
   (requetes combinees par departement, retries, jamais fatale).
 - `sirene_stock.py` : alternative exhaustive via le stock INSEE (DuckDB,
   fichier ~4 Go a telecharger une fois).
-- `finess_ingest.py` : etablissements sanitaires et medico-sociaux (FINESS,
-  telechargement automatique). Robuste au format (BOM, delimiteur, colonnes
-  deplacees) ; garde les etablissements sans SIRET. NB : le flux actuel
-  s'arrete le 20/07/2026, bascule Finess+ prevue (changer FINESS_CSV_URL).
+- `finess_ingest.py` : etablissements sanitaires et medico-sociaux. Lit en
+  priorite le NOUVEAU flux Finess+ "FINESS - Structures" (JSON quotidien,
+  depuis le 20/07/2026), avec repli automatique sur l'ancien flux CSV (fige
+  au 04/05/2026). Robuste au format (extraction par motifs et cles, jamais
+  par position) ; garde les etablissements sans SIRET et herite le SIREN de
+  l'entite juridique quand l'etablissement n'a pas le sien.
 - `build_base.py` : fusion + dedoublonnage par ETABLISSEMENT (chaque site
   d'un groupe reste une ligne ; `--par-entreprise` pour une ligne par SIREN).
 
