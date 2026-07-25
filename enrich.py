@@ -3,7 +3,7 @@
 """
 enrich.py - Enrichissement MAXIMAL de la base sante, avec reprise automatique.
 
-Pour chaque etablissement de base_sante.csv, ajoute 31 colonnes :
+Pour chaque etablissement de base_sante.csv, ajoute 40 colonnes :
 
  1. FICHE OFFICIELLE (API Recherche d'entreprises, 1 appel par SIREN, en cache) :
     effectif, categorie (PME/ETI/GE), nature juridique, date de creation,
@@ -20,6 +20,10 @@ Pour chaque etablissement de base_sante.csv, ajoute 31 colonnes :
     GENERIQUES (contact@, accueil@...), telephone, page LinkedIn ; puis
     verification MX du domaine. Aucun email nominatif n'est devine.
  5. SCORE 0-100 et TIER A/B/C, avec le detail des raisons.
+ 6. ETAT administratif (active / cessee, les cessees passent en tier "exclu"),
+    LIENS prets a cliquer (fiche Pappers, fiche Annuaire des Entreprises,
+    Google Maps, recherche Google) et drapeaux derives : a_site (oui/non),
+    email_perso (oui/non), anciennete (en annees).
 
 REPRISE AUTOMATIQUE : chaque execution complete la sortie, les lignes deja
 faites sont sautees. Relancez autant de fois que necessaire :
@@ -43,6 +47,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
+from urllib.parse import quote_plus
 
 from common import (load_config, strip_acc, slugify, norm_phone,
                     USER_AGENT, BASE_COLS)
@@ -61,13 +66,14 @@ BODACC_URL = ("https://bodacc-datadila.opendatasoft.com/api/explore/v2.1/"
               "catalog/datasets/annonces-commerciales/records")
 DDG_URL = "https://html.duckduckgo.com/html/"
 
-ENRICH_COLS = ["score", "tier", "raisons",
-               "effectif", "categorie", "nature_juridique", "date_creation",
+ENRICH_COLS = ["score", "tier", "raisons", "etat",
+               "effectif", "categorie", "nature_juridique", "date_creation", "anciennete",
                "nb_etablissements", "ca", "ca_prev", "resultat_net", "annee_finances",
                "adresse", "cp", "ville", "latitude", "longitude", "tva_intra",
                "dirigeant", "qualite", "autres_dirigeants", "labels", "idcc",
-               "domain", "email", "email_source", "email_status", "autres_emails",
-               "linkedin", "signaux_bodacc", "date_enrichi", "web_fait"]
+               "domain", "a_site", "email", "email_perso", "email_source", "email_status",
+               "autres_emails", "linkedin", "lien_pappers", "lien_annuaire", "lien_maps",
+               "lien_google", "signaux_bodacc", "date_enrichi", "web_fait"]
 OUT_COLS = BASE_COLS + ENRICH_COLS
 
 
@@ -177,13 +183,16 @@ def api_fetch(siren):
 
 
 def parse_fiche(res):
-    out = {c: "" for c in ("effectif", "categorie", "nature_juridique", "date_creation",
+    out = {c: "" for c in ("etat", "effectif", "categorie", "nature_juridique", "date_creation",
                            "nb_etablissements", "ca", "ca_prev", "resultat_net",
                            "annee_finances", "adresse", "cp", "ville", "latitude",
                            "longitude", "dirigeant", "qualite", "autres_dirigeants",
                            "labels", "idcc", "nom", "naf", "libelle", "commune_maj")}
     if not res:
         return out
+    etat = str(res.get("etat_administratif")
+               or (res.get("siege") or {}).get("etat_administratif") or "").upper()
+    out["etat"] = {"A": "active", "C": "cessee"}.get(etat, etat.lower())
     out["nom"] = res.get("nom_raison_sociale") or res.get("nom_complet") or ""
     out["naf"] = res.get("activite_principale") or ""
     out["libelle"] = res.get("libelle_activite_principale") or ""
@@ -420,11 +429,15 @@ def compute_score(row, sc, distress):
         add(sc["poids_dirigeant"], "dirigeant")
     if row.get("labels"):
         add(sc["poids_labels"], "labels")
+    cessee = (row.get("etat") == "cessee")
     if distress:
         pts = max(pts - sc["penalite_distress"], 0)
         why.append("PROCEDURE COLLECTIVE")
+    if cessee:
+        pts = 0
+        why.append("ENTREPRISE CESSEE")
     score = min(pts, 100)
-    if distress:
+    if distress or cessee:
         tier = "exclu"
     elif score >= sc["seuil_tier_A"]:
         tier = "A"
@@ -442,13 +455,71 @@ def row_key(r):
     return r.get("siret") or r.get("siren") or f"{r.get('nom','')}|{r.get('commune','')}"
 
 
+def fill_links(row):
+    """Liens prets a cliquer, construits localement (aucun appel reseau)."""
+    siren = (row.get("siren") or "").strip()
+    if len(siren) == 9 and siren.isdigit():
+        row["lien_pappers"] = f"https://www.pappers.fr/entreprise/{siren}"
+        row["lien_annuaire"] = f"https://annuaire-entreprises.data.gouv.fr/entreprise/{siren}"
+    lat, lon = (row.get("latitude") or "").strip(), (row.get("longitude") or "").strip()
+    if lat and lon:
+        row["lien_maps"] = f"https://www.google.com/maps?q={lat},{lon}"
+    else:
+        q = f"{row.get('nom', '')} {row.get('ville') or row.get('commune', '')}".strip()
+        row["lien_maps"] = "https://www.google.com/maps/search/?api=1&query=" + quote_plus(q) if q else ""
+    q2 = f"{row.get('nom', '')} {row.get('ville') or row.get('commune', '')}".strip()
+    row["lien_google"] = "https://www.google.com/search?q=" + quote_plus(q2) if q2 else ""
+
+
+PERSO_DOMAINS = {"gmail.com", "hotmail.com", "hotmail.fr", "outlook.com", "outlook.fr",
+                 "yahoo.com", "yahoo.fr", "orange.fr", "wanadoo.fr", "free.fr", "sfr.fr",
+                 "laposte.net", "live.fr", "icloud.com", "aol.com", "bbox.fr", "neuf.fr", "gmx.fr"}
+
+
+def derive_flags(row):
+    """Colonnes derivees, calcul local : a_site, email_perso, anciennete."""
+    row["a_site"] = "oui" if (row.get("domain") or "").strip() else "non"
+    em = (row.get("email") or "").strip().lower()
+    row["email_perso"] = ("oui" if em.split("@")[-1] in PERSO_DOMAINS else "non") if em else ""
+    dc = row.get("date_creation") or ""
+    row["anciennete"] = str(max(date.today().year - int(dc[:4]), 0)) if len(dc) >= 4 and dc[:4].isdigit() else ""
+
+
+def migrate_out(path):
+    """Si la sortie existante a un ancien schema, la reecrit avec les colonnes actuelles."""
+    if not os.path.exists(path):
+        return
+    with opencsv(path, "r") as f:
+        try:
+            header = next(csv.reader(f))
+        except StopIteration:
+            return
+    if header == OUT_COLS:
+        return
+    with opencsv(path, "r") as f:
+        rows = list(csv.DictReader(f))
+    for row in rows:
+        for c in OUT_COLS:
+            row.setdefault(c, "")
+        fill_links(row)
+        derive_flags(row)
+    tmp = (path[:-3] + ".tmp.gz") if path.endswith(".gz") else path + ".tmp"
+    with opencsv(tmp, "w") as f:
+        w = csv.DictWriter(f, fieldnames=OUT_COLS, extrasaction="ignore", restval="")
+        w.writeheader()
+        w.writerows(rows)
+    os.replace(tmp, path)
+    print(f"MIGRATION: {path} passe de {len(header)} a {len(OUT_COLS)} colonnes "
+          f"({len(rows)} lignes conservees, liens recalcules)", file=sys.stderr)
+
+
 def enrich_row(base_row, cfg, sc, use_bodacc, use_web):
     row = {c: base_row.get(c, "") for c in BASE_COLS}
     row.update({c: "" for c in ENRICH_COLS})
     siren = (row.get("siren") or "").strip()
     fiche = parse_fiche(api_fetch(siren)) if siren else {}
     if fiche:
-        for c in ("effectif", "categorie", "nature_juridique", "date_creation",
+        for c in ("etat", "effectif", "categorie", "nature_juridique", "date_creation",
                   "nb_etablissements", "ca", "ca_prev", "resultat_net", "annee_finances",
                   "adresse", "cp", "ville", "latitude", "longitude",
                   "dirigeant", "qualite", "autres_dirigeants", "labels", "idcc"):
@@ -468,6 +539,8 @@ def enrich_row(base_row, cfg, sc, use_bodacc, use_web):
             row[c] = contacts[c]
         if contacts["telephone"] and not row.get("telephone"):
             row["telephone"] = contacts["telephone"]
+    fill_links(row)
+    derive_flags(row)
     row["score"], row["tier"], row["raisons"] = compute_score(row, sc, distress)
     row["date_enrichi"] = date.today().isoformat()
     row["web_fait"] = "oui" if use_web else "non"
@@ -511,6 +584,8 @@ def completer_web(a, cfg, sc):
             r[k] = c[k]
         if c["telephone"] and not r.get("telephone"):
             r["telephone"] = c["telephone"]
+        fill_links(r)
+        derive_flags(r)
         r["score"], r["tier"], r["raisons"] = compute_score(r, sc, r.get("tier") == "exclu")
         r["date_enrichi"] = date.today().isoformat()
         r["web_fait"] = "oui"
@@ -523,7 +598,7 @@ def completer_web(a, cfg, sc):
                 print(f"  {done_n}/{len(idxs)}", file=sys.stderr)
     tmp = (a.out[:-3] + ".tmp.gz") if a.out.endswith(".gz") else a.out + ".tmp"
     with opencsv(tmp, "w") as f:
-        w = csv.DictWriter(f, fieldnames=OUT_COLS, extrasaction="ignore")
+        w = csv.DictWriter(f, fieldnames=OUT_COLS, extrasaction="ignore", restval="")
         w.writeheader()
         w.writerows(rows)
     os.replace(tmp, a.out)
@@ -560,6 +635,7 @@ def main():
     cfg, sc = conf["enrichissement"], conf["scoring"]
     if a.workers:
         cfg["workers"] = a.workers
+    migrate_out(a.out)
     if a.completer_web:
         completer_web(a, cfg, sc)
         return
@@ -596,7 +672,7 @@ def main():
 
     new_file = not os.path.exists(a.out)
     with opencsv(a.out, "a") as f:
-        w = csv.DictWriter(f, fieldnames=OUT_COLS, extrasaction="ignore")
+        w = csv.DictWriter(f, fieldnames=OUT_COLS, extrasaction="ignore", restval="")
         if new_file:
             w.writeheader()
         done_n = 0
