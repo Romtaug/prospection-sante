@@ -7,7 +7,7 @@ import yaml
 USER_AGENT = "prospection-sante/1.0 (base sante B2B; +voir mentions legales)"
 
 # Colonnes de la base (toutes les sources s'alignent dessus).
-BASE_COLS = ["siren", "siret", "nom", "type", "naf", "libelle",
+BASE_COLS = ["siren", "siret", "finess", "nom", "type", "naf", "libelle",
              "commune", "departement", "telephone", "source"]
 
 # Colonnes ajoutees par l'enrichissement contacts.
