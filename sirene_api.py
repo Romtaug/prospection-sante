@@ -55,6 +55,8 @@ def fetch(session, params, sleep):
 
 
 def parse_result(res, tmap):
+    if str(res.get("etat_administratif") or "").upper() == "C":
+        return None          # societe cessee : hors prospection
     naf = res.get("activite_principale") or ""
     typ = tmap.get(naf.replace(".", "").upper(), "autre")
     siege = res.get("siege") or {}
