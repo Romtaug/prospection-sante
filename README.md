@@ -6,7 +6,7 @@ puis l'enrichit au maximum : fiche officielle, finances, dirigeants, labels,
 TVA, signaux BODACC, site web, email generique, telephone, LinkedIn, score.
 
 Sorties : `data/base_sante.csv` (via GitHub Actions) puis
-`base_sante_enrichi.csv` (42 colonnes, en local ou entierement via GitHub Actions).
+`base_sante_enrichi.csv` (51 colonnes, en local ou entierement via GitHub Actions).
 
 ## Regle de perimetre
 
@@ -38,14 +38,15 @@ automatiquement.
   priorite le NOUVEAU flux Finess+ "FINESS - Structures" (JSON quotidien,
   depuis le 20/07/2026), avec repli automatique sur l'ancien flux CSV (fige
   au 04/05/2026). Robuste au format (extraction par motifs et cles, jamais
-  par position) ; ignore les etablissements FERMES, garde ceux sans SIRET et herite le
+  par position) ; expose le numero FINESS de chaque etablissement (colonne `finess`),
+  ignore les etablissements FERMES, garde ceux sans SIRET et herite le
   SIREN de l'entite juridique quand l'etablissement n'a pas le sien.
 - `build_base.py` : fusion + dedoublonnage par ETABLISSEMENT (chaque site
   d'un groupe reste une ligne ; `--par-entreprise` pour une ligne par SIREN).
 
 ## Etape 2 - l'enrichissement maximal (`enrich.py`, en LOCAL)
 
-Pour chaque ligne, ajoute 32 colonnes :
+Pour chaque ligne, ajoute 40 colonnes :
 
 - Fiche officielle (API Recherche d'entreprises, 1 appel par SIREN, cache) :
   effectif, categorie PME/ETI/GE, nature juridique, date de creation, nb
