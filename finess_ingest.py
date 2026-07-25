@@ -322,7 +322,8 @@ def build(records, wanted_types, departements):
         siren = siren_of(siret) or rec.get("siren_ej", "")
         if not siren:
             stats["sans_siret"] += 1
-        rows.append({"siren": siren, "siret": siret, "nom": rec["nom"], "type": typ,
+        rows.append({"siren": siren, "siret": siret, "finess": rec["nofinesset"],
+                     "nom": rec["nom"], "type": typ,
                      "naf": "", "libelle": rec.get("libelle", ""), "commune": rec["commune"],
                      "departement": dep, "telephone": rec["telephone"], "source": "finess"})
     return rows, stats
